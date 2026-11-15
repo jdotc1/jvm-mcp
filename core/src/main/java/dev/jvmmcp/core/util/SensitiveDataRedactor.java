@@ -63,6 +63,20 @@ public final class SensitiveDataRedactor {
     private static final Pattern JWT_PATTERN =
             Pattern.compile("\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]*\\b");
 
+    private static final Pattern AWS_ACCESS_KEY_PATTERN =
+            Pattern.compile("(?<![A-Za-z0-9_])AKIA[0-9A-Z]{16}(?![A-Za-z0-9_])");
+    private static final Pattern GITHUB_TOKEN_PATTERN =
+            Pattern.compile("(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9_]{36,}(?![A-Za-z0-9_])");
+    private static final Pattern SLACK_TOKEN_PATTERN =
+            Pattern.compile(
+                    "(?<![A-Za-z0-9_])xoxb-[0-9]{11,13}-[0-9]{11,13}-[A-Za-z0-9]{24}(?![A-Za-z0-9_])");
+    // Mask the entire private-key body, including truncated blocks with no closing delimiter.
+    private static final Pattern PEM_PRIVATE_KEY_PATTERN =
+            Pattern.compile(
+                    "-----BEGIN ((?:(?:RSA|EC|DSA|OPENSSH|ENCRYPTED) )?PRIVATE KEY)-----"
+                            + ".*?(?:-----END \\1-----|\\z)",
+                    Pattern.DOTALL);
+
     /*
      * Sensitive identifiers must form a complete component delimited by the start/end of the key,
      * ".", "_" or "-". CamelCase names are normalized before matching. Thus "clientSecret" and
@@ -70,7 +84,7 @@ public final class SensitiveDataRedactor {
      */
     private static final Pattern SENSITIVE_KEY_PATTERN =
             Pattern.compile(
-                    "(?:^|[._-])(?:password|passwd|pwd|secret|token|apikey|api[_-]?key|access[_-]?(?:key|token)|client[_-]?secret|private[_-]?key|auth[_-]?token|credential)(?:$|[._-])");
+                    "(?:^|[._-])(?:password|passwd|pwd|pin|secret|token|apikey|api[_-]?key|access[_-]?(?:key|token)|client[_-]?secret|private[_-]?key|auth[_-]?token|credential)(?:$|[._-])");
 
     private SensitiveDataRedactor() {}
 
@@ -85,7 +99,7 @@ public final class SensitiveDataRedactor {
             return text;
         }
 
-        String result = text;
+        String result = PEM_PRIVATE_KEY_PATTERN.matcher(text).replaceAll("***");
         result = AUTHORIZATION_PATTERN.matcher(result).replaceAll("$1***");
         result = redactStandaloneAuth(result, BEARER_PATTERN, false);
         result = redactStandaloneAuth(result, BASIC_PATTERN, true);
@@ -94,6 +108,9 @@ public final class SensitiveDataRedactor {
         result = JDBC_URL_PATTERN.matcher(result).replaceAll("$1***@");
         result = URI_USERINFO_PATTERN.matcher(result).replaceAll("$1***@");
         result = JWT_PATTERN.matcher(result).replaceAll("***");
+        result = AWS_ACCESS_KEY_PATTERN.matcher(result).replaceAll("***");
+        result = GITHUB_TOKEN_PATTERN.matcher(result).replaceAll("***");
+        result = SLACK_TOKEN_PATTERN.matcher(result).replaceAll("***");
 
         return result;
     }
@@ -216,8 +233,8 @@ public final class SensitiveDataRedactor {
             return null;
         }
 
-        if (obj instanceof String s) {
-            return redact(s);
+        if (obj instanceof CharSequence text) {
+            return redact(text.toString());
         }
 
         if (obj instanceof java.util.Map<?, ?> map) {
@@ -228,7 +245,7 @@ public final class SensitiveDataRedactor {
                 Object safeKey = key instanceof String sk ? redact(sk) : key;
                 Object val = entry.getValue();
 
-                if (key instanceof String sk && isSensitiveKeyName(sk) && val instanceof String) {
+                if (key instanceof String sk && isSensitiveKeyName(sk)) {
                     copy.put(safeKey, "***");
                 } else {
                     copy.put(safeKey, redactDeep(val));
