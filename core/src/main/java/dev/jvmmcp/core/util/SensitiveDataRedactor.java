@@ -70,7 +70,7 @@ public final class SensitiveDataRedactor {
      */
     private static final Pattern SENSITIVE_KEY_PATTERN =
             Pattern.compile(
-                    "(?:^|[._-])(?:password|passwd|pwd|secret|token|apikey|api[_-]?key|access[_-]?(?:key|token)|client[_-]?secret|private[_-]?key|auth[_-]?token|credential)(?:$|[._-])");
+                    "(?:^|[._-])(?:password|passwd|pwd|pin|secret|token|apikey|api[_-]?key|access[_-]?(?:key|token)|client[_-]?secret|private[_-]?key|auth[_-]?token|credential)(?:$|[._-])");
 
     private SensitiveDataRedactor() {}
 
@@ -228,7 +228,7 @@ public final class SensitiveDataRedactor {
                 Object safeKey = key instanceof String sk ? redact(sk) : key;
                 Object val = entry.getValue();
 
-                if (key instanceof String sk && isSensitiveKeyName(sk) && val instanceof String) {
+                if (key instanceof String sk && isSensitiveKeyName(sk)) {
                     copy.put(safeKey, "***");
                 } else {
                     copy.put(safeKey, redactDeep(val));
