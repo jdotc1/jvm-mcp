@@ -270,6 +270,55 @@ class SensitiveDataRedactorTest {
     }
 
     @Test
+    @DisplayName("Redacts standalone cloud tokens and complete or truncated PEM private keys")
+    void testCloudCredentialsAndPrivateKeys() {
+        String awsKey = "AKIA" + "A".repeat(16);
+        String githubToken = "ghp_" + "a".repeat(36);
+        String slackToken = "xoxb-123456789012-123456789012-" + "x".repeat(24);
+        String pem =
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                        + "synthetic-private-key-body\n"
+                        + "-----END RSA PRIVATE KEY-----";
+
+        String redacted =
+                SensitiveDataRedactor.redact(
+                        "aws " + awsKey + " github " + githubToken + " slack " + slackToken + "\n" + pem);
+        assertThat(redacted).doesNotContain(awsKey, githubToken, slackToken, "synthetic-private-key-body");
+        assertThat(redacted).contains("aws *** github *** slack ***");
+        assertThat(SensitiveDataRedactor.redact("-----BEGIN PRIVATE KEY-----\ntruncated-data"))
+                .doesNotContain("truncated-data");
+
+        String nearMisses = "AKIA" + "A".repeat(15) + " ghp_" + "a".repeat(35);
+        assertThat(SensitiveDataRedactor.redact(nearMisses)).isEqualTo(nearMisses);
+        assertThat(SensitiveDataRedactor.redact("-----BEGIN PUBLIC KEY-----\nnot-private"))
+                .contains("not-private");
+    }
+
+    @Test
+    @DisplayName("Masks non-string values under sensitive keys without hiding unrelated numbers")
+    @SuppressWarnings("unchecked")
+    void testRedactDeepNonStringSecrets() {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("pin", 123456);
+        input.put("authToken", new char[] {'s', 'e', 'c', 'r', 'e', 't'});
+        input.put("privateKey", new byte[] {1, 2, 3});
+        input.put("password", new StringBuilder("secret-password"));
+        input.put("retryCount", 3);
+
+        Map<String, Object> redacted = (Map<String, Object>) SensitiveDataRedactor.redactDeep(input);
+        assertThat(redacted)
+                .containsEntry("pin", "***")
+                .containsEntry("authToken", "***")
+                .containsEntry("privateKey", "***")
+                .containsEntry("password", "***")
+                .containsEntry("retryCount", 3);
+        assertThat(
+                        SensitiveDataRedactor.redactDeep(
+                                new StringBuilder("Authorization: Bearer secret-token-1234")))
+                .isEqualTo("Authorization: Bearer ***");
+    }
+
+    @Test
     @DisplayName("Recursively redacts secrets in nested maps and lists")
     @SuppressWarnings("unchecked")
     void testRedactDeepWithNestedStructures() {
