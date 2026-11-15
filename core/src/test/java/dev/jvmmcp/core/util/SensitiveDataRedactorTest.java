@@ -325,4 +325,32 @@ class SensitiveDataRedactorTest {
                 .containsEntry("tokenizer", "simple")
                 .containsEntry("passwordless", "true");
     }
+
+    @Test
+    @DisplayName("Redacts non-string secret values at every nesting level")
+    @SuppressWarnings("unchecked")
+    void testDeepRedactionOfNonStringSecretValues() {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("pin", 123456);
+        input.put("authToken", 987654321L);
+        input.put("password", new char[] {'s', 'e', 'c', 'r', 'e', 't'});
+        input.put("apiKey", new byte[] {1, 2, 3, 4});
+        input.put("clientSecret", new StringBuilder("synthetic-secret-value"));
+        input.put("count", 42);
+        input.put("nested", Map.of("access_token", new char[] {'a', 'b'}, "message", "safe"));
+
+        Map<String, Object> redacted =
+                (Map<String, Object>) SensitiveDataRedactor.redactDeep(input);
+
+        assertThat(redacted)
+                .containsEntry("pin", "***")
+                .containsEntry("authToken", "***")
+                .containsEntry("password", "***")
+                .containsEntry("apiKey", "***")
+                .containsEntry("clientSecret", "***")
+                .containsEntry("count", 42);
+        assertThat((Map<String, Object>) redacted.get("nested"))
+                .containsEntry("access_token", "***")
+                .containsEntry("message", "safe");
+    }
 }
