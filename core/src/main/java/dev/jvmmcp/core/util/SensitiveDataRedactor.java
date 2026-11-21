@@ -21,6 +21,11 @@ public final class SensitiveDataRedactor {
                     "(?i)(\\bauthorization[ \\t]*[:=][ \\t]*(?:bearer|basic)[ \\t]+)"
                             + "[^\\s,;\"']+");
 
+    // HTTP cookie headers contain session and CSRF credentials; redact the entire
+    // header value rather than attempting to classify individual cookie names.
+    private static final Pattern COOKIE_HEADER_PATTERN =
+            Pattern.compile("(?im)^([ \\t]*(?:cookie|set-cookie)[ \\t]*:[ \\t]*)[^\\r\\n]+");
+
     private static final Pattern BEARER_PATTERN =
             Pattern.compile(
                     "(?i)\\b(bearer[ \\t]+)([A-Za-z0-9\\-._~+/]{12,}={0,2})"
@@ -70,7 +75,7 @@ public final class SensitiveDataRedactor {
      */
     private static final Pattern SENSITIVE_KEY_PATTERN =
             Pattern.compile(
-                    "(?:^|[._-])(?:password|passwd|pwd|secret|token|apikey|api[_-]?key|access[_-]?(?:key|token)|client[_-]?secret|private[_-]?key|auth[_-]?token|credential)(?:$|[._-])");
+                    "(?:^|[._-])(?:password|passwd|pwd|secret|token|apikey|api[_-]?key|access[_-]?(?:key|token)|client[_-]?secret|private[_-]?key|auth[_-]?token|credential|cookie|set[_-]?cookie)(?:$|[._-])");
 
     private SensitiveDataRedactor() {}
 
@@ -87,6 +92,7 @@ public final class SensitiveDataRedactor {
 
         String result = text;
         result = AUTHORIZATION_PATTERN.matcher(result).replaceAll("$1***");
+        result = COOKIE_HEADER_PATTERN.matcher(result).replaceAll("$1***");
         result = redactStandaloneAuth(result, BEARER_PATTERN, false);
         result = redactStandaloneAuth(result, BASIC_PATTERN, true);
         result = redactJsonSecrets(result);
