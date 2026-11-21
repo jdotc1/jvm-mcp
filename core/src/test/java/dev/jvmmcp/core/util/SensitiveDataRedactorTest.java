@@ -23,19 +23,19 @@ class SensitiveDataRedactorTest {
     @DisplayName("Redacts HTTP Cookie and Set-Cookie header values without affecting adjacent headers")
     void testCookieHeaders() {
         String input =
-                "Cookie: session=long-sensitive-value; theme=light\\n"
-                        + "Set-Cookie: auth=another-secret; HttpOnly; Secure\\n"
-                        + "X-Cookie: public-metadata\\n"
+                "Cookie: session=long-sensitive-value; theme=light\n"
+                        + "Set-Cookie: auth=another-secret; HttpOnly; Secure\n"
+                        + "X-Cookie: public-metadata\n"
                         + "Content-Type: text/plain";
         assertThat(SensitiveDataRedactor.redact(input))
-                .isEqualTo("Cookie: ***\\nSet-Cookie: ***\\nX-Cookie: public-metadata\\nContent-Type: text/plain");
+                .isEqualTo("Cookie: ***\nSet-Cookie: ***\nX-Cookie: public-metadata\nContent-Type: text/plain");
     }
 
     @Test
     @DisplayName("Redacts cookie-valued JSON and assignment fields")
     void testCookieKeys() {
-        assertThat(SensitiveDataRedactor.redact("{\\\"Cookie\\\":\\\"session=secret\\\",\\\"cookiePolicy\\\":\\\"strict\\\"}"))
-                .isEqualTo("{\\\"Cookie\\\":\\\"***\\\",\\\"cookiePolicy\\\":\\\"strict\\\"}");
+        assertThat(SensitiveDataRedactor.redact("{\"Cookie\":\"session=secret\",\"cookiePolicy\":\"strict\"}"))
+                .isEqualTo("{\"Cookie\":\"***\",\"cookiePolicy\":\"strict\"}");
         assertThat(SensitiveDataRedactor.redact("sessionCookie=private-value"))
                 .isEqualTo("sessionCookie=***");
     }
