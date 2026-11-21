@@ -75,7 +75,7 @@ public final class SensitiveDataRedactor {
      */
     private static final Pattern SENSITIVE_KEY_PATTERN =
             Pattern.compile(
-                    "(?:^|[._-])(?:password|passwd|pwd|secret|token|apikey|api[_-]?key|access[_-]?(?:key|token)|client[_-]?secret|private[_-]?key|auth[_-]?token|credential|cookie|set[_-]?cookie)(?:$|[._-])");
+                    "(?:^|[._-])(?:password|passwd|pwd|secret|token|apikey|api[_-]?key|access[_-]?(?:key|token)|client[_-]?secret|private[_-]?key|auth[_-]?token|credential)(?:$|[._-])");
 
     private SensitiveDataRedactor() {}
 
@@ -208,6 +208,12 @@ public final class SensitiveDataRedactor {
                         .replaceAll("([a-z0-9])([A-Z])", "$1_$2")
                         .toLowerCase(Locale.ROOT);
 
+        // Only exact cookie-bearing field names are credentials: cookiePolicy,
+        // cookieConsent and similar configuration values must remain visible.
+        if (normalized.equals("cookie") || normalized.equals("set_cookie")
+                || normalized.equals("session_cookie")) {
+            return true;
+        }
         return SENSITIVE_KEY_PATTERN.matcher(normalized).find();
     }
 
