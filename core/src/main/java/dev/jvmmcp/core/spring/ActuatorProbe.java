@@ -102,30 +102,43 @@ public class ActuatorProbe {
         }
     }
 
-    private HttpRequest.Builder newRequest(String urlStr, Duration timeout) {
-        try {
-            URI originalUri = URI.create(urlStr);
-            String host = originalUri.getHost();
-
-            if (host == null) {
-                throw new SecurityException("Invalid URL: No host provided");
-            }
-
-            ActuatorClient.validateLoopbackHost(host);
-
-            HttpRequest.Builder builder =
-                    HttpRequest.newBuilder()
-                            .uri(originalUri)
-                            .timeout(timeout)
-                            .header("Accept", "application/json")
-                            .header("Accept-Encoding", "gzip, deflate");
-
-            auth.authorizationHeader().ifPresent(value -> builder.header("Authorization", value));
-
-            return builder;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to create safe request: " + e.getMessage(), e);
+    private static URI validateActuatorUrl(String url) {
+        if (url == null || url.isBlank()) {
+            throw new IllegalArgumentException("SSRF Protection: URL cannot be empty");
         }
+
+        final URI uri;
+        try {
+            uri = URI.create(url.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("SSRF Protection: Invalid Actuator URL", e);
+        }
+
+        String scheme = uri.getScheme();
+        if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+            throw new IllegalArgumentException("SSRF Protection: URL scheme must be http or https");
+        }
+        if (uri.getUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            throw new IllegalArgumentException(
+                    "SSRF Protection: Credentials, query and fragment are not permitted");
+        }
+        if (uri.getHost() == null) {
+            throw new IllegalArgumentException("SSRF Protection: URL must have a host");
+        }
+        ActuatorClient.validateLoopbackHost(uri.getHost());
+        return uri;
+    }
+
+    private HttpRequest.Builder newRequest(String urlStr, Duration timeout) {
+        URI uri = validateActuatorUrl(urlStr);
+        HttpRequest.Builder builder =
+                HttpRequest.newBuilder()
+                        .uri(uri)
+                        .timeout(timeout)
+                        .header("Accept", "application/json")
+                        .header("Accept-Encoding", "gzip, deflate");
+        auth.authorizationHeader().ifPresent(value -> builder.header("Authorization", value));
+        return builder;
     }
 
     public Optional<ProbeResult> probe(VirtualMachine vm) {
@@ -185,6 +198,9 @@ public class ActuatorProbe {
     }
 
     public Optional<String> fetchFromUrl(String baseUrl) {
+        // Validate user-supplied destinations before probing; never convert SSRF errors
+        // into a misleading "Actuator unreachable" result.
+        validateActuatorUrl(baseUrl);
         for (String targetUrl : candidateBeansUrls(baseUrl)) {
             try {
                 HttpRequest request = newRequest(targetUrl, Duration.ofSeconds(3)).GET().build();
@@ -196,7 +212,11 @@ public class ActuatorProbe {
                 if (response.statusCode() == 200 && response.body() != null) {
                     return Optional.of(response.body());
                 }
+            } catch (IllegalArgumentException e) {
+                // Includes DNS rebinding rejected by the per-request host validation.
+                throw e;
             } catch (Exception ignored) {
+                // Network errors may fall through to the other candidate endpoint.
             }
         }
 
@@ -204,13 +224,14 @@ public class ActuatorProbe {
     }
 
     static List<String> candidateBeansUrls(String baseUrl) {
-        String trimmed = baseUrl.trim();
-
-        if (trimmed.endsWith("/beans")) {
-            return List.of(trimmed);
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalArgumentException("Actuator URL cannot be null or blank");
         }
+        String base = baseUrl.trim().replaceAll("/+$", "");
 
-        String base = trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
+        if (base.endsWith("/beans")) {
+            return List.of(base);
+        }
         return List.of(base + "/actuator/beans", base + "/beans");
     }
 

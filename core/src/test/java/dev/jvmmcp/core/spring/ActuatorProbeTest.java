@@ -275,6 +275,46 @@ class ActuatorProbeTest {
     }
 
     @Test
+    @DisplayName("fetchFromUrl propagates loopback-only SSRF protection failures")
+    void shouldRejectNonLoopbackFetchDestinations() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> new ActuatorProbe().fetchFromUrl("http://169.254.169.254"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("SSRF Protection");
+    }
+
+    @Test
+    @DisplayName("fetchFromUrl rejects malformed and credential-bearing URLs")
+    void shouldRejectUnsafeActuatorUrlsBeforeNetworkAccess() {
+        ActuatorProbe probe = new ActuatorProbe();
+        for (String url :
+                java.util.List.of(
+                        "file:///etc/passwd",
+                        "ftp://127.0.0.1:8080",
+                        "http://user:pass@127.0.0.1:8080",
+                        "http://127.0.0.1:8080?secret=value",
+                        "http://127.0.0.1:8080#fragment")) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> probe.fetchFromUrl(url))
+                    .as("Rejects %s", url)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("SSRF Protection");
+        }
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> probe.fetchFromUrl(null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("candidateBeansUrls strips all trailing slashes")
+    void shouldNormalizeAllTrailingSlashesInCandidates() {
+        assertThat(ActuatorProbe.candidateBeansUrls("http://127.0.0.1:8080///"))
+                .containsExactly(
+                        "http://127.0.0.1:8080/actuator/beans",
+                        "http://127.0.0.1:8080/beans");
+        assertThat(ActuatorProbe.candidateBeansUrls("http://127.0.0.1:8080/beans///"))
+                .containsExactly("http://127.0.0.1:8080/beans");
+    }
+
+    @Test
     @DisplayName("fetchFromUrl preserves the original hostname in the Host header")
     void shouldPreserveHostnameWhenFetchingFromUrl() {
         AtomicReference<String> hostHeader = new AtomicReference<>();
