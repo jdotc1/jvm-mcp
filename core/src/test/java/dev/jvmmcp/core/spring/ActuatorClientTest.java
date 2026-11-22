@@ -490,6 +490,49 @@ class ActuatorClientTest {
     }
 
     @Test
+    void testFetchEndpointRejectsAbsoluteUriEscapingBaseContext() {
+        ActuatorClient scoped =
+                new ActuatorClient("http://127.0.0.1:" + port + "/app", ActuatorAuth.NONE);
+
+        assertThatThrownBy(
+                        () -> scoped.fetchEndpoint("http://127.0.0.1:" + port + "/admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("SSRF Protection");
+
+        assertThatThrownBy(
+                        () -> scoped.fetchEndpoint("https://127.0.0.1:" + port + "/admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("SSRF Protection");
+    }
+
+    @Test
+    void testMetricNamesCannotEscapeUrlPath() {
+        assertThatThrownBy(() -> client.getMetric(null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> client.getMetric("  "))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        for (String invalid : List.of(".", "..", "a/b", "a\\b")) {
+            assertThatThrownBy(() -> client.getMetric(invalid))
+                    .as("getMetric rejects %s", invalid)
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> client.getMetricsBatch(List.of(invalid)))
+                    .as("getMetricsBatch rejects %s", invalid)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> client.getMetricsBatch(java.util.Arrays.asList((String) null)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> client.getMetricsBatch(List.of("jvm.memory.used", "..")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void testMetricNamesTrimWhitespace() {
+        assertThat(client.getMetric("  jvm.memory.used  "))
+                .contains("jvm.memory.used");
+    }
+
+    @Test
     void testPathTraversalRejectedInFetchEndpoint() {
         assertThatThrownBy(() -> client.fetchEndpoint("/actuator/../etc/passwd"))
                 .isInstanceOf(IllegalArgumentException.class)

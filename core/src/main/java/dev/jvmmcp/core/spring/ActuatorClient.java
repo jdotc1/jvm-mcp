@@ -245,10 +245,18 @@ public class ActuatorClient {
         }
         URI baseUri = URI.create(baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
         String relativePath = targetPath.replaceFirst("^/+", "");
-        URI resolvedUri = baseUri.resolve(URI.create(relativePath).normalize());
+        URI candidate = URI.create(relativePath);
+        // A caller-supplied absolute URI must not replace the configured context path.
+        if (candidate.isAbsolute() || candidate.getRawAuthority() != null) {
+            throw new IllegalArgumentException(
+                    "SSRF Protection: Endpoint must be relative to the base URL");
+        }
+        URI resolvedUri = baseUri.resolve(candidate.normalize());
         if (!Objects.equals(resolvedUri.getScheme(), baseUri.getScheme())
                 || !Objects.equals(resolvedUri.getHost(), baseUri.getHost())
-                || resolvedUri.getPort() != baseUri.getPort()) {
+                || resolvedUri.getPort() != baseUri.getPort()
+                || resolvedUri.getRawPath() == null
+                || !resolvedUri.getRawPath().startsWith(baseUri.getRawPath())) {
             throw new IllegalArgumentException(
                     "SSRF Protection: Endpoint resolution deviated from base URL");
         }
@@ -317,10 +325,24 @@ public class ActuatorClient {
         return fetchEndpoint("/actuator/metrics");
     }
 
+    private static String encodeMetricName(String metricName) {
+        if (metricName == null || metricName.isBlank()) {
+            throw new IllegalArgumentException("Metric name cannot be null or blank");
+        }
+        String name = metricName.trim();
+        if (name.equals(".")
+                || name.equals("..")
+                || name.contains("/")
+                || name.contains("\\")
+                || name.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("Metric name must be a safe URL path segment");
+        }
+        // URLEncoder targets HTML form data; path segments require %20 rather than '+'.
+        return java.net.URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
     public String getMetric(String metricName) {
-        return fetchEndpoint(
-                "/actuator/metrics/"
-                        + java.net.URLEncoder.encode(metricName, StandardCharsets.UTF_8));
+        return fetchEndpoint("/actuator/metrics/" + encodeMetricName(metricName));
     }
 
     private record MetricBatchTask(
@@ -343,13 +365,14 @@ public class ActuatorClient {
                         : timeout;
         long timeoutMillis = Math.max(1L, effectiveTimeout.toMillis());
 
+        // Reject an invalid batch before starting any HTTP requests.
+        metricNames.forEach(ActuatorClient::encodeMetricName);
+
         List<MetricBatchTask> tasks =
                 metricNames.stream()
                         .map(
                                 name -> {
-                                    String encodedName =
-                                            java.net.URLEncoder.encode(
-                                                    name.trim(), StandardCharsets.UTF_8);
+                                    String encodedName = encodeMetricName(name);
                                     String targetUrl = baseUrl + "/actuator/metrics/" + encodedName;
                                     HttpRequest request = newRequest(targetUrl).GET().build();
 
