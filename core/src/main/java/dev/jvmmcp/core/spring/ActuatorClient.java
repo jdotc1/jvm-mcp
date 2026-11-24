@@ -17,6 +17,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.TrustManager;
@@ -225,6 +226,39 @@ public class ActuatorClient {
         return builder;
     }
 
+    private URI resolveEndpoint(String endpoint) {
+        if (endpoint == null || endpoint.isBlank()) {
+            throw new IllegalArgumentException("Endpoint cannot be null or empty");
+        }
+        String targetPath = endpoint.startsWith("/") ? endpoint : "/" + endpoint;
+        if (targetPath.contains("..") || targetPath.contains("\\")) {
+            throw new IllegalArgumentException(
+                    "SSRF Protection: Path traversal sequences are prohibited in endpoint");
+        }
+        if (targetPath.startsWith("//")) {
+            throw new IllegalArgumentException("SSRF Protection: Endpoint must be a relative path");
+        }
+        URI baseUri = URI.create(baseUrl + "/");
+        URI candidate = URI.create(targetPath.substring(1));
+        if (candidate.isAbsolute() || candidate.getRawAuthority() != null) {
+            throw new IllegalArgumentException("SSRF Protection: Endpoint must be a relative path");
+        }
+        String decodedPath = candidate.getPath();
+        if (decodedPath.contains("..") || decodedPath.contains("\\")) {
+            throw new IllegalArgumentException(
+                    "SSRF Protection: Path traversal sequences are prohibited in endpoint");
+        }
+        URI resolvedUri = baseUri.resolve(candidate.normalize());
+        if (!Objects.equals(resolvedUri.getScheme(), baseUri.getScheme())
+                || !Objects.equals(resolvedUri.getHost(), baseUri.getHost())
+                || resolvedUri.getPort() != baseUri.getPort()
+                || !resolvedUri.getRawPath().startsWith(baseUri.getRawPath())) {
+            throw new IllegalArgumentException(
+                    "SSRF Protection: Endpoint resolution deviated from base URL");
+        }
+        return resolvedUri;
+    }
+
     /**
      * Fetches the specified actuator endpoint.
      *
@@ -234,25 +268,8 @@ public class ActuatorClient {
      * @throws RuntimeException if the endpoint is unreachable or returns a non-200/503 status code.
      */
     public String fetchEndpoint(String endpoint) {
-        if (endpoint == null || endpoint.isBlank()) {
-            throw new IllegalArgumentException("Endpoint cannot be null or empty");
-        }
+        String targetUrl = resolveEndpoint(endpoint).toString();
         String targetPath = endpoint.startsWith("/") ? endpoint : "/" + endpoint;
-        if (targetPath.contains("..") || targetPath.contains("\\")) {
-            throw new IllegalArgumentException(
-                    "SSRF Protection: Path traversal sequences are prohibited in endpoint: "
-                            + endpoint);
-        }
-        URI baseUri = URI.create(baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
-        String relativePath = targetPath.replaceFirst("^/+", "");
-        URI resolvedUri = baseUri.resolve(URI.create(relativePath).normalize());
-        if (!Objects.equals(resolvedUri.getScheme(), baseUri.getScheme())
-                || !Objects.equals(resolvedUri.getHost(), baseUri.getHost())
-                || resolvedUri.getPort() != baseUri.getPort()) {
-            throw new IllegalArgumentException(
-                    "SSRF Protection: Endpoint resolution deviated from base URL");
-        }
-        String targetUrl = resolvedUri.toString();
 
         try {
             HttpRequest request = newRequest(targetUrl).GET().build();
@@ -317,10 +334,20 @@ public class ActuatorClient {
         return fetchEndpoint("/actuator/metrics");
     }
 
+    private static String metricPath(String metricName) {
+        if (metricName == null || metricName.isBlank()) {
+            throw new IllegalArgumentException("Metric name cannot be null or empty");
+        }
+        String name = metricName.trim();
+        if (name.equals(".") || name.contains("..") || name.contains("/") || name.contains("\\")) {
+            throw new IllegalArgumentException("Metric name must be a single safe path segment");
+        }
+        return "/actuator/metrics/"
+                + java.net.URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
     public String getMetric(String metricName) {
-        return fetchEndpoint(
-                "/actuator/metrics/"
-                        + java.net.URLEncoder.encode(metricName, StandardCharsets.UTF_8));
+        return fetchEndpoint(metricPath(metricName));
     }
 
     private record MetricBatchTask(
@@ -343,14 +370,15 @@ public class ActuatorClient {
                         : timeout;
         long timeoutMillis = Math.max(1L, effectiveTimeout.toMillis());
 
+        // Validate the entire batch before dispatching any requests.
+        List<URI> targets =
+                metricNames.stream().map(name -> resolveEndpoint(metricPath(name))).toList();
         List<MetricBatchTask> tasks =
-                metricNames.stream()
-                        .map(
-                                name -> {
-                                    String encodedName =
-                                            java.net.URLEncoder.encode(
-                                                    name.trim(), StandardCharsets.UTF_8);
-                                    String targetUrl = baseUrl + "/actuator/metrics/" + encodedName;
+                IntStream.range(0, metricNames.size())
+                        .mapToObj(
+                                index -> {
+                                    String name = metricNames.get(index);
+                                    String targetUrl = targets.get(index).toString();
                                     HttpRequest request = newRequest(targetUrl).GET().build();
 
                                     CompletableFuture<HttpResponse<String>> httpFuture =
