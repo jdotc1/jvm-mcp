@@ -501,6 +501,60 @@ class ActuatorClientTest {
     }
 
     @Test
+    void testRejectsAbsoluteEndpointOutsideContext() {
+        ActuatorClient scopedClient =
+                new ActuatorClient("http://127.0.0.1:" + port + "/app", ActuatorAuth.NONE);
+        assertThatThrownBy(
+                        () -> scopedClient.fetchEndpoint("http://127.0.0.1:" + port + "/admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("relative path");
+        assertThatThrownBy(() -> scopedClient.fetchEndpoint("//localhost/admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("relative path");
+        assertThatThrownBy(() -> scopedClient.fetchEndpoint("/actuator/%2e%2e/admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Path traversal");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", ".", "..", "nested/metric", "nested\\metric"})
+    void testRejectsUnsafeMetricNamesInSingleAndBatchRequests(String name) {
+        assertThatThrownBy(() -> client.getMetric(name))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> client.getMetricsBatch(List.of("jvm.memory.used", name)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void testRejectsNullMetricNameInSingleAndBatchRequests() {
+        assertThatThrownBy(() -> client.getMetric(null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(
+                        () -> client.getMetricsBatch(java.util.Collections.singletonList(null)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void testMetricNamesWithSpacesUsePathEncoding() {
+        List<String> paths = new CopyOnWriteArrayList<>();
+        server.createContext(
+                "/actuator/metrics/metric name",
+                exchange -> {
+                    paths.add(exchange.getRequestURI().getRawPath());
+                    byte[] response = "{}".getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, response.length);
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response);
+                    }
+                });
+        assertThat(client.getMetric(" metric name ")).isEqualTo("{}");
+        assertThat(client.getMetricsBatch(List.of("metric name")))
+                .isEqualTo("{\"metric name\": {}}");
+        assertThat(paths)
+                .containsExactly("/actuator/metrics/metric%20name", "/actuator/metrics/metric%20name");
+    }
+
+    @Test
     void testSSRFProtectionRejectsUserInfoQueryAndFragment() {
         assertThatThrownBy(
                         () ->
